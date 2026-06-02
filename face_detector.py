@@ -8,16 +8,13 @@ import time
 import os
 import traceback
 from db import initialize_db, create_session, insert_detection, insert_embedding, get_all_embeddings
-import tempfile
 
-# NEW: Privacy Assets Path
 PROXY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "privacy", "neutral_proxy.jpeg")
 
 class FaceAnonymizer:
     def __init__(self, proxy_path):
         self.proxy_img = cv2.imread(proxy_path)
         if self.proxy_img is None:
-            # Fallback: Create a gray placeholder if the image is missing
             self.proxy_img = np.full((224, 224, 3), 128, dtype=np.uint8)
             print("WARNING: Proxy face image not found. Using gray placeholder.")
 
@@ -25,33 +22,24 @@ class FaceAnonymizer:
         """Replaces the face at the given coordinates with the synthetic proxy."""
         w, h = x2 - x1, y2 - y1
         if w <= 0 or h <= 0: return frame
-        
-        # Resize proxy to match the detected face size
         resized_proxy = cv2.resize(self.proxy_img, (w, h))
-        
-        # Create a mask for seamless blending
         mask = 255 * np.ones(resized_proxy.shape, resized_proxy.dtype)
         center = (x1 + w // 2, y1 + h // 2)
-        
         try:
-            # Irreversibly swap the real pixels for synthetic pixels
             frame = cv2.seamlessClone(resized_proxy, frame, mask, center, cv2.NORMAL_CLONE)
         except:
-            # Fallback to simple overlay if seamlessClone fails (e.g., edge of frame)
             frame[y1:y2, x1:x2] = resized_proxy
         return frame
 
-# Initialize the anonymizer once
 anonymizer = FaceAnonymizer(PROXY_PATH)
 
-# ... (get_emotion, get_category, etc. remain the same)
 MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "models",
     "yolov8n-face-lindevs.pt"
 )
 
-FFMPEG_PATH = r"C:\ffmpeg\ffmpeg-8.1-essentials_build\bin\ffmpeg.exe"
+FFMPEG_PATH = os.getenv("FFMPEG_PATH", r"C:\ffmpeg\ffmpeg-8.1-essentials_build\bin\ffmpeg.exe")
 
 print("FFMPEG exists:", os.path.exists(FFMPEG_PATH))
 print("MODEL_PATH:", MODEL_PATH)
@@ -108,8 +96,6 @@ def is_revisit(embedding, threshold=0.80):
         if sim > threshold:
             return True
     return False
-   
-
 
 def open_stream(rtsp_url, width=640, height=360):
     command = [
@@ -151,7 +137,7 @@ def read_frame(process, width=640, height=360):
         bytes_read += len(chunk)
     raw = b"".join(chunks)
     return np.frombuffer(raw, dtype=np.uint8).reshape((height, width, 3))
-    
+
 def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, height=360, frame_interval=2, anonymize=True):
     print(f"Starting stream: {camera_name}")
     process = open_stream(rtsp_url, width, height)
@@ -161,7 +147,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
         return
 
     print(f"{camera_name}: stream opened, starting detection")
-
     os.makedirs("C:\\temp", exist_ok=True)
 
     face_tracker = {}
@@ -173,7 +158,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
     try:
         while not stop_event.is_set():
             frame = read_frame(process, width, height)
-    
 
             if frame is None:
                 empty_frame_count += 1
@@ -184,8 +168,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
 
             empty_frame_count = 0
             frame_idx += 1
-
-            
 
             if frame_idx % frame_interval != 0:
                 continue
@@ -199,7 +181,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
                     continue
 
                 boxes = results[0].boxes
-
                 camera_num = 1 if "1" in camera_name else 2
                 ids = boxes.id.tolist() if boxes.id is not None else [camera_num * 10000 for _ in range(len(boxes))]
 
@@ -223,7 +204,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
                     if anonymize:
                         frame = anonymizer.apply_mask(frame, x1, y1, x2, y2)
 
-                       # Save latest frame for dashboard display
                     try:
                         cv2.imwrite(f"C:\\temp\\frame_{camera_name}.jpg", frame)
                     except:
@@ -251,7 +231,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
     except Exception as e:
         print(f"ERROR in {camera_name}: {e}")
         traceback.print_exc()
-        print(f"{camera_name}: face_tracker size={len(face_tracker)}")
     finally:
         print(f"{camera_name}: finally block reached, face_tracker size={len(face_tracker)}")
         process.terminate()
@@ -268,7 +247,6 @@ def process_stream(rtsp_url, camera_name, session_id, thread_model, width=640, h
         print(f"{camera_name}: saved {len(face_tracker)} unique faces")
 
 stop_event = threading.Event()
-
 active_threads = []
 
 def run_face_detector(rtsp_urls=None, video_path=None, video_name="live_stream", anonymize=True):
@@ -286,7 +264,7 @@ def run_face_detector(rtsp_urls=None, video_path=None, video_name="live_stream",
             for i, url in enumerate(rtsp_urls):
                 t = threading.Thread(
                     target=process_stream,
-                    args=(url, f"Camera_{i+1}", session_id, model, 640, 360, 1, anonymize),  # ← pass model
+                    args=(url, f"Camera_{i+1}", session_id, model, 640, 360, 1, anonymize),
                     daemon=False
                 )
                 active_threads.append(t)
@@ -320,7 +298,6 @@ def run_face_detector(rtsp_urls=None, video_path=None, video_name="live_stream",
                 for b, track_id in zip(r.boxes, r.boxes.id.tolist()):
                     track_id = int(track_id)
                     conf = float(b.conf[0])
-                    print(f"{camera_name}: track_id={track_id}, conf={conf:.2f}")  # ← add this
                     x1, y1, x2, y2 = b.xyxy[0].tolist()
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
 
@@ -377,5 +354,3 @@ def run_face_detector(rtsp_urls=None, video_path=None, video_name="live_stream",
     except Exception as e:
         print(f"ERROR in run_face_detector: {e}")
         traceback.print_exc()
-
-   

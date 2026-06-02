@@ -1,34 +1,51 @@
-# Gradle files
-.gradle/
+# Database
+data/emotions.db
+data/*.db
+
+# Model weights (too large for GitHub)
+models/*.pt
+models/*.onnx
+
+# Temp frames
+C:/temp/
+temp/
+
+# Environment / credentials
+.env
+config.ini
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
 build/
+.eggs/
+*.egg
 
-# Local configuration file (sdk path, etc)
-local.properties
+# Virtual environments
+venv/
+env/
+.venv/
 
-# Log/OS Files
+# Rust build artifacts
+rust/dataset_verify/target/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Logs
 *.log
-
-# Android Studio generated files and folders
-captures/
-.externalNativeBuild/
-.cxx/
-*.aab
-*.apk
-output-metadata.json
-
-# IntelliJ
-*.iml
-.idea/
-misc.xml
-deploymentTargetDropDown.xml
-render.experimental.xml
-
-# Keystore files
-*.jks
-*.keystore
-
-# Google Services (e.g. APIs or Firebase)
-google-services.json
-
-# Android Profiling
-*.hprof

@@ -14,6 +14,9 @@ import csv
 from db import get_all_detections, get_category_dwell
 import time
 import threading
+import cv2
+import numpy as np
+from PIL import Image
 
 st.set_page_config(layout="wide")
 
@@ -22,9 +25,6 @@ st.set_page_config(layout="wide")
 # ------------------------
 st.sidebar.header("2026 Compliance Settings")
 anonymize_live = st.sidebar.checkbox("Enable Synthetic Face Mask", value=True, help="Replaces real faces with a non-existent AI proxy.")
-
-# ... (run_verifier, simulate_customer, process_video unchanged)
-
 
 # ------------------------
 # STATE / DATA STRUCTURES
@@ -92,14 +92,11 @@ def process_video(uploaded_file):
         tfile.flush()
         tfile.close()
 
-        # Step 1: Face Detection
         run_face_detector(video_path=tfile.name, video_name=uploaded_file.name)
 
-        # Step 2: Rust Verifier
         verifier_output = run_verifier()
         print(verifier_output)
 
-        # Step 3: Classify from SQLite
         for emotion, category, duration, revisit in get_all_detections():
             process_detection(
                 emotion,
@@ -153,7 +150,6 @@ if uploaded_file is not None:
 
 st.subheader("Live Analysis")
 
-# Initialize streaming state
 if "streaming" not in st.session_state:
     st.session_state.streaming = False
 if "stream_start" not in st.session_state:
@@ -169,7 +165,6 @@ with col3:
         st.session_state.category_scores.clear()
         st.session_state.category_dwell = {}
 
-        # Clean DB for fresh session
         import sqlite3
         conn = sqlite3.connect("data/emotions.db")
         conn.execute("DELETE FROM detections")
@@ -178,15 +173,14 @@ with col3:
         conn.commit()
         conn.close()
 
-        # Start streams in background thread
-
         def stream_worker(should_anonymize):
             run_face_detector(
-                rtsp_urls=["rtsp://admin:Hayami100@192.168.0.75:554/onvif1",
-"rtsp://admin:Hayami100@192.168.0.144:554/onvif1"],
+                rtsp_urls=[
+                    os.getenv("CAMERA_1_URL", "rtsp://user:password@192.168.0.x:554/onvif1"),
+                    os.getenv("CAMERA_2_URL", "rtsp://user:password@192.168.0.x:554/onvif1")
+                ],
                 video_name="FCBD_2026",
-                # Pass the toggle to the detector
-                anonymize=should_anonymize 
+                anonymize=should_anonymize
             )
             st.session_state.streaming = False
 
@@ -197,7 +191,6 @@ with col3:
 with col4:
     if st.button("⏹ Stop", key="stop_btn", disabled=not st.session_state.streaming):
         stop_all_streams()
-         # Wait up to 10 seconds for threads to finish saving
         for t in active_threads:
             t.join(timeout=10)
         st.session_state.streaming = False
@@ -206,13 +199,11 @@ with col4:
 # Show live dashboard while streaming
 if st.session_state.streaming or st.session_state.stream_start:
 
-    # Session timer
     if st.session_state.stream_start:
         elapsed = int(time.time() - st.session_state.stream_start)
         mins, secs = divmod(elapsed, 60)
         st.metric("Session Duration", f"{mins:02d}:{secs:02d}")
 
-    # Refresh data from SQLite
     for emotion, category, duration, revisit in get_all_detections():
         process_detection(
             emotion,
@@ -224,12 +215,11 @@ if st.session_state.streaming or st.session_state.stream_start:
         )
     st.session_state.category_dwell = get_category_dwell()
 
-    # Live metrics
     total_faces = sum(st.session_state.signal_counts.values())
     st.metric("Total Faces Detected", total_faces)
 
     st.subheader("Category Engagement")
-    for cat, score in sorted(st.session_state.category_scores.items(), 
+    for cat, score in sorted(st.session_state.category_scores.items(),
                               key=lambda x: x[1], reverse=True):
         st.progress(min(score / 100, 1.0), text=f"{cat}: {score}")
 
@@ -239,40 +229,28 @@ if st.session_state.streaming or st.session_state.stream_start:
         st.session_state.category_scores,
         st.session_state.category_dwell
     ))
-import cv2
-import numpy as np
-from PIL import Image
 
-# Live feed display
-st.subheader("Live Feed")
-col_cam1, col_cam2 = st.columns(2)
+    # Live feed display
+    st.subheader("Live Feed")
+    col_cam1, col_cam2 = st.columns(2)
 
-for col, cam_num in zip([col_cam1, col_cam2], [1, 2]):
-    # Find the thread ID for this camera's temp file
-    frame_files = [f for f in os.listdir("C:\\temp") if f.endswith(".jpg")]
-    if frame_files:
-        # Show the most recently modified frame
-        latest = max(
-            [os.path.join("C:\\temp", f) for f in frame_files],
-            key=os.path.getmtime
-        )
-        try:
-            img = cv2.imread(latest)
-            if img is not None:
-                img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                with col:
-                    st.image(img_rgb, caption=f"Camera {cam_num}", width='stretch')
-        except:
-            pass
-    else:
-        with col:
-            st.info(f"Camera {cam_num}: no feed yet")
-  # Replace your current Auto-refresh block with this:
+    for col, cam_name in zip([col_cam1, col_cam2], ["Camera_1", "Camera_2"]):
+        fpath = f"C:\\temp\\frame_{cam_name}.jpg"
+        if os.path.exists(fpath):
+            try:
+                img = cv2.imread(fpath)
+                if img is not None:
+                    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                    with col:
+                        st.image(img_rgb, caption=cam_name, width='stretch')
+            except:
+                pass
+        else:
+            with col:
+                st.info(f"{cam_name}: no feed yet")
 
 if st.session_state.streaming:
-    # This empty element allows us to update the UI 
-    # without a heavy 'time.sleep' blocking the main thread
-    time.sleep(2) 
+    time.sleep(2)
     st.rerun()
 
 # ------------------------
@@ -281,9 +259,8 @@ if st.session_state.streaming:
 
 st.subheader("Camera Streams")
 
-cam1_url = st.text_input("Camera 1 RTSP URL", value="rtsp://admin:Hayami100@192.168.0.75:554/onvif1")
-cam2_url = st.text_input("Camera 2 RTSP URL", value="rtsp://admin:Hayami100@192.168.0.144:554/onvif1")
-
+cam1_url = st.text_input("Camera 1 RTSP URL", value=os.getenv("CAMERA_1_URL", "rtsp://user:password@192.168.0.x:554/onvif1"))
+cam2_url = st.text_input("Camera 2 RTSP URL", value=os.getenv("CAMERA_2_URL", "rtsp://user:password@192.168.0.x:554/onvif1"))
 
 if st.button("Start Live Analysis"):
     with st.spinner("Streaming and analyzing..."):
@@ -294,33 +271,4 @@ if st.button("Start Live Analysis"):
         verifier_output = run_verifier()
         print(verifier_output)
 
-        for emotion, category, duration, revisit in get_all_detections():
-            process_detection(
-                emotion,
-                duration,
-                category,
-                st.session_state.signal_counts,
-                st.session_state.category_scores,
-                revisit=bool(revisit)
-            )
-
-        st.session_state.category_dwell = get_category_dwell()
-    st.success("Analysis complete!")
-
-
-# ------------------------
-# OUTPUT
-# ------------------------
-
-st.header("Engagement Summary")
-st.write(dict(st.session_state.signal_counts))
-
-st.header("Category Engagement")
-st.write(dict(st.session_state.category_scores))
-
-st.header("Recommendations")
-st.success(generate_recommendation(
-    st.session_state.signal_counts,
-    st.session_state.category_scores,
-    st.session_state.category_dwell
-))
+        for emotion, category, duration, revisit in get_all
